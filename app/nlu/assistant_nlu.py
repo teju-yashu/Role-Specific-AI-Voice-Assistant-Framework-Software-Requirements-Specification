@@ -140,6 +140,27 @@ class RuleBasedAssistantNLU:
             "confidence": round(confidence, 2),
         }
 
+    def extract_follow_up_entities(
+        self,
+        selected_role: str,
+        query: str,
+        required_entities: list[str] | tuple[str, ...],
+    ) -> dict[str, str]:
+        """Extract only the known entity types requested by a clarification."""
+        role_key = " ".join(selected_role.split()).casefold()
+        role = self.SUPPORTED_ROLES.get(role_key)
+        if role is None:
+            raise ValueError("selected_role is not supported.")
+
+        extracted = self._extract_entities(role, query)
+        if "issue_description" in required_entities and role == "IT Support":
+            extracted["issue_description"] = query.strip()
+        return {
+            entity: extracted[entity]
+            for entity in required_entities
+            if entity in extracted
+        }
+
     @classmethod
     def clarification_question(cls, missing_entities: object) -> str:
         """Build a short prompt for entities reported missing by WorkflowAgent."""

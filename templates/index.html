@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token }}" />
     <meta name="theme-color" content="#f5f7fb" />
     <title>Conversation | Role-Specific Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
@@ -17,15 +18,47 @@
             <p class="eyebrow">Role-specific assistant</p>
             <h1 id="chat-title">Text conversation</h1>
           </div>
-          <span class="connection-label">Text chat</span>
+          <div class="chat-header-actions">
+            <button class="history-toggle" id="history-toggle" type="button" aria-expanded="false" aria-controls="conversation-history">History</button>
+            <form class="logout-form" id="logout-form" method="post" action="{{ url_for('logout_account') }}">
+              <button type="submit">Sign out</button>
+            </form>
+          </div>
         </header>
+
+        <div class="role-picker">
+          <label for="selected-role">Assistant role</label>
+          <select id="selected-role" name="selected_role" required>
+            {% for role in assistant_roles %}
+            <option value="{{ role.role_key }}">{{ role.display_name }}</option>
+            {% endfor %}
+          </select>
+          <button class="new-conversation-button" id="new-conversation-button" type="button">New conversation</button>
+        </div>
+        <p class="ai-mode-status" id="ai-mode-status" role="status" aria-live="polite">
+          {% if openai_configured %}
+          AI mode: OpenAI configured; connection is checked when you send a message.
+          {% else %}
+          AI mode: Rule-based assistant (fallback).
+          {% endif %}
+        </p>
+
+        <section class="history-panel" id="conversation-history" aria-label="Conversation history" hidden>
+          <div class="history-heading">
+            <h2>Previous conversations</h2>
+            <button id="history-refresh" type="button">Refresh</button>
+          </div>
+          <ul id="history-list"></ul>
+          <p id="history-status" role="status" aria-live="polite"></p>
+        </section>
 
         <div class="conversation" id="conversation" role="log" aria-live="polite" aria-relevant="additions text">
           <p class="welcome-note">Send a message to start a conversation.</p>
         </div>
+        <p class="conversation-status" id="conversation-status" role="status" aria-live="polite"></p>
         <p class="tts-status" id="tts-status" role="status" aria-live="polite"></p>
 
-        <form class="composer" id="chat-form">
+        <form class="composer" id="chat-form" action="{{ url_for('execute_assistant_query') }}">
           <label class="sr-only" for="message-input">Your message</label>
           <textarea
             id="message-input"

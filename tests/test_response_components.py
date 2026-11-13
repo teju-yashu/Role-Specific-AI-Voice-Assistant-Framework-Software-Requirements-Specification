@@ -164,7 +164,7 @@ def test_evaluator_accepts_relevant_response_with_supported_facts() -> None:
         "HR",
         "check_leave_balance",
         result,
-        "Your leave balance for employee EMP-42 is 12 days.",
+        "Your leave balance for employee EMP-42 is 12 days. This is sample data.",
     )
 
     assert evaluation["relevant"] is True
@@ -251,11 +251,23 @@ def test_evaluator_accepts_valid_leave_balance_response() -> None:
                 "source": "mock",
             },
         },
-        "Your leave balance for employee EMP-42 is 12 days.",
+        "Your leave balance for employee EMP-42 is 12 days. This is sample data.",
     )
 
     assert evaluation["relevant"] is True
     assert evaluation["checks"]["workflow_facts_supported"] is True
+
+
+def test_evaluator_rejects_organization_specific_claims_for_general_questions() -> None:
+    evaluation = ResponseEvaluator().evaluate(
+        "HR",
+        "general",
+        {"status": "general_question", "data": None},
+        "Our organization's leave policy allows 20 days. This is general information.",
+    )
+
+    assert evaluation["relevant"] is False
+    assert evaluation["checks"]["outcome_consistent"] is False
 
 
 def test_role_check_does_not_confuse_user_supplied_issue_text_with_role_switching() -> None:

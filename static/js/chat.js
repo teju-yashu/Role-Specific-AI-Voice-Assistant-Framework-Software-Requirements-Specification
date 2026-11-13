@@ -1,18 +1,29 @@
-const CHAT_ENDPOINT = "/api/chat";
-
 const form = document.querySelector("#chat-form");
 const input = document.querySelector("#message-input");
+const roleSelect = document.querySelector("#selected-role");
 const sendButton = document.querySelector("#send-button");
 const micButton = document.querySelector("#mic-button");
 const speechStatus = document.querySelector("#speech-status");
 const conversation = document.querySelector("#conversation");
 const ttsStatus = document.querySelector("#tts-status");
-const welcomeNote = document.querySelector(".welcome-note");
-let serviceNotice = null;
+let welcomeNote = document.querySelector(".welcome-note");
+const logoutForm = document.querySelector("#logout-form");
+const historyToggle = document.querySelector("#history-toggle");
+const historyPanel = document.querySelector("#conversation-history");
+const historyList = document.querySelector("#history-list");
+const historyStatus = document.querySelector("#history-status");
+const historyRefresh = document.querySelector("#history-refresh");
+const newConversationButton = document.querySelector("#new-conversation-button");
+const conversationStatus = document.querySelector("#conversation-status");
+const aiModeStatus = document.querySelector("#ai-mode-status");
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
 let recognition = null;
 let recognitionState = "idle";
 let recognitionHadResult = false;
 let recognitionErrorMessage = "";
+let recognitionDiscardResults = false;
+let requestInProgress = false;
+let conversationId = null;
 let activeSpeech = null;
 const preferredSpeechLanguage = "en-US";
 const speechSynthesisAvailable =
@@ -26,17 +37,18 @@ function scrollToLatestMessage() {
   conversation.scrollTop = conversation.scrollHeight;
 }
 
-function addMessage(role, text) {
+function addMessage(role, text, status = null) {
   welcomeNote?.remove();
-  serviceNotice?.remove();
-  serviceNotice = null;
 
   const message = document.createElement("article");
   message.className = `message ${role}`;
+  if (status) {
+    message.dataset.status = status;
+  }
 
   const author = document.createElement("span");
   author.className = "message-author";
-  author.textContent = role === "user" ? "You" : "Assistant";
+  author.textContent = role === "user" ? "You" : role === "agent" ? "Human agent" : "Assistant";
 
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
@@ -206,26 +218,89 @@ function createSpeechControl(bubble) {
   return actions;
 }
 
-async function submitMessage(text) {
-  const response = await fetch(CHAT_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ message: text }),
-  });
+async function submitMessage(selectedRole, query) {
+  let response;
+  try {
+    const requestBody = { selected_role: selectedRole, query };
+    if (conversationId) {
+      requestBody.conversation_id = conversationId;
+    }
+    response = await fetch(form.action, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      },
+      body: JSON.stringify(requestBody),
+    });
+  } catch {
+    throw new Error("Unable to reach the conversation service. Check your connection and try again.");
+  }
+
+  const data = await readResponseJson(response);
 
   if (!response.ok) {
-    throw new Error("The conversation service returned an error.");
+    const message =
+      data &&
+      typeof data === "object" &&
+      !Array.isArray(data) &&
+      typeof data.error === "string"
+        ? data.error
+        : `The conversation service returned an error (HTTP ${response.status}).`;
+    throw new Error(message);
   }
 
-  const data = await response.json();
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("The conversation service returned an invalid response. Please try again.");
+  }
+
   if (typeof data.response !== "string" || !data.response.trim()) {
-    throw new Error("The conversation service returned an invalid response.");
+    throw new Error("The conversation service returned an invalid response. Please try again.");
   }
 
-  return data.response;
+  let text = data.response;
+  if (data.status === "clarification_required") {
+    text = data.response || data.clarification_question;
+  } else if (data.status === "unknown_intent") {
+    text = data.response || data.message;
+  } else if (data.status === "escalation_required") {
+    text = data.response || "This request needs human review.";
+  }
+  return {
+    text,
+    status: data.status,
+    conversationId: data.conversation_id,
+    escalationStatus: data.escalation_status,
+    llmMode: data.llm_mode,
+  };
+}
+
+async function readResponseJson(response) {
+  try {
+    const data = await response.json();
+    return data && typeof data === "object" && !Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function setConversationStatus(message, isError = false) {
+  if (!conversationStatus) {
+    return;
+  }
+  conversationStatus.textContent = message;
+  conversationStatus.classList.toggle("is-error", isError);
+}
+
+function setLlmMode(mode) {
+  if (!aiModeStatus) {
+    return;
+  }
+  aiModeStatus.textContent =
+    mode === "openai"
+      ? "AI mode: OpenAI connected."
+      : "AI mode: Rule-based assistant (fallback).";
 }
 
 function showProcessingIndicator() {
@@ -252,36 +327,260 @@ function showProcessingIndicator() {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const text = input.value.trim();
-  if (!text || sendButton.disabled) {
+  const originalText = input.value;
+  const text = originalText.trim();
+  if (!text || requestInProgress || sendButton.disabled) {
     return;
   }
 
+  requestInProgress = true;
+  if (recognition) {
+    stopRecognition(true);
+  }
+
+  const selectedRole = roleSelect.value;
   addMessage("user", text);
   input.value = "";
   input.style.height = "";
   sendButton.disabled = true;
   input.disabled = true;
+  roleSelect.disabled = true;
+  micButton.disabled = true;
+  if (newConversationButton) newConversationButton.disabled = true;
+  if (historyToggle) historyToggle.disabled = true;
   const indicator = showProcessingIndicator();
 
   try {
-    const assistantText = await submitMessage(text);
+    const result = await submitMessage(selectedRole, text);
     indicator.remove();
-    addMessage("assistant", assistantText);
+    if (typeof result.conversationId === "string") {
+      conversationId = result.conversationId;
+    }
+    if (typeof result.llmMode === "string") {
+      setLlmMode(result.llmMode);
+    }
+    addMessage("assistant", result.text, result.status);
+    if (result.escalationStatus === "pending") {
+      setConversationStatus("A human agent review is pending. You can check its status in conversation history.");
+    } else if (result.status === "clarification_required") {
+      setConversationStatus("Conversation context saved. Reply here to continue.");
+    } else {
+      setConversationStatus("");
+    }
   } catch (error) {
     indicator.remove();
-    serviceNotice = document.createElement("p");
-    serviceNotice.className = "welcome-note";
-    serviceNotice.setAttribute("role", "alert");
-    serviceNotice.textContent = "Unable to get a response from the conversation service. Please try again later.";
-    conversation.append(serviceNotice);
-    scrollToLatestMessage();
+    setConversationStatus(
+      error instanceof Error ? error.message : "The request could not be completed.",
+      true,
+    );
+    if (input.value === "") {
+      input.value = originalText;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    addMessage(
+      "assistant",
+      error instanceof Error
+        ? error.message
+        : "The request could not be completed. Please try again.",
+      "error",
+    );
     console.error("Conversation request failed:", error);
   } finally {
     sendButton.disabled = false;
     input.disabled = false;
+    roleSelect.disabled = false;
+    requestInProgress = false;
+    micButton.disabled =
+      recognition !== null && recognitionState === "stopping";
+    if (newConversationButton) newConversationButton.disabled = false;
+    if (historyToggle) historyToggle.disabled = false;
     input.focus();
   }
+});
+
+logoutForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = logoutForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const response = await fetch(logoutForm.action, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      },
+    });
+    const data = await response.json();
+    if (!response.ok || typeof data.redirect_url !== "string") {
+      throw new Error("Sign out could not be completed.");
+    }
+    window.location.assign(data.redirect_url);
+  } catch (error) {
+    setSpeechStatus(
+      error instanceof Error ? error.message : "Sign out could not be completed.",
+      true,
+    );
+    button.disabled = false;
+  }
+});
+
+function renderWelcomeNote() {
+  const note = document.createElement("p");
+  note.className = "welcome-note";
+  note.textContent = "Send a message to start a conversation.";
+  conversation.append(note);
+  welcomeNote = note;
+}
+
+function clearConversationView() {
+  conversation.replaceChildren();
+  welcomeNote = null;
+}
+
+async function loadConversationHistory() {
+  if (!historyList || !historyStatus) {
+    return;
+  }
+  historyStatus.textContent = "Loading conversation history...";
+  historyStatus.classList.remove("is-error");
+  try {
+    const response = await fetch("/api/conversations", {
+      headers: { Accept: "application/json" },
+    });
+    const data = await readResponseJson(response);
+    if (!response.ok || !data || !Array.isArray(data.conversations)) {
+      throw new Error(
+        data && typeof data.error === "string"
+          ? data.error
+          : `Conversation history could not be loaded (HTTP ${response.status}).`,
+      );
+    }
+
+    historyList.replaceChildren();
+    for (const item of data.conversations) {
+      if (!item || typeof item.id !== "string") {
+        continue;
+      }
+      const listItem = document.createElement("li");
+      const button = document.createElement("button");
+      button.className = "history-item";
+      button.type = "button";
+      const title = document.createElement("span");
+      title.textContent = item.title || item.last_message || "Conversation";
+      const status = document.createElement("span");
+      status.className = "history-item-status";
+      status.textContent = item.escalation_status
+        ? `Escalation ${item.escalation_status}`
+        : item.status || "";
+      button.append(title, status);
+      button.addEventListener("click", () => loadConversation(item.id));
+      listItem.append(button);
+      historyList.append(listItem);
+    }
+    historyStatus.textContent = data.conversations.length
+      ? ""
+      : "No previous conversations.";
+  } catch (error) {
+    historyStatus.textContent =
+      error instanceof Error ? error.message : "Conversation history could not be loaded.";
+    historyStatus.classList.add("is-error");
+  }
+}
+
+async function loadConversation(id) {
+  if (requestInProgress) {
+    return;
+  }
+  historyStatus.textContent = "Loading conversation...";
+  historyStatus.classList.remove("is-error");
+  try {
+    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+      headers: { Accept: "application/json" },
+    });
+    const data = await readResponseJson(response);
+    if (
+      !response.ok ||
+      !data ||
+      !data.conversation ||
+      !Array.isArray(data.messages)
+    ) {
+      throw new Error(
+        data && typeof data.error === "string"
+          ? data.error
+          : `Conversation could not be loaded (HTTP ${response.status}).`,
+      );
+    }
+
+    clearConversationView();
+    conversationId = data.conversation.id;
+    roleSelect.value = data.conversation.selected_role;
+    for (const message of data.messages) {
+      if (message && ["user", "assistant", "agent"].includes(message.sender)) {
+        addMessage(message.sender, String(message.body || ""), message.status);
+      }
+    }
+    if (data.escalation) {
+      setConversationStatus(`Escalation status: ${data.escalation.status}.`);
+    } else {
+      setConversationStatus("Conversation loaded. Continue by sending a message.");
+    }
+    historyStatus.textContent = "";
+    const roleIsAvailable = Array.from(roleSelect.options || []).some(
+      (option) => option.value === data.conversation.selected_role,
+    );
+    roleSelect.disabled = !roleIsAvailable;
+    input.disabled = !roleIsAvailable;
+    sendButton.disabled = !roleIsAvailable;
+    micButton.disabled = !roleIsAvailable;
+    if (!roleIsAvailable) {
+      setConversationStatus(
+        "This assistant role is inactive. You can view the conversation but cannot continue it.",
+        true,
+      );
+    }
+  } catch (error) {
+    historyStatus.textContent =
+      error instanceof Error ? error.message : "Conversation could not be loaded.";
+    historyStatus.classList.add("is-error");
+  }
+}
+
+historyToggle?.addEventListener("click", async () => {
+  const isExpanded = historyToggle.getAttribute("aria-expanded") === "true";
+  historyToggle.setAttribute("aria-expanded", String(!isExpanded));
+  if (historyPanel) {
+    historyPanel.hidden = isExpanded;
+  }
+  if (!isExpanded) {
+    await loadConversationHistory();
+  }
+});
+
+historyRefresh?.addEventListener("click", loadConversationHistory);
+
+newConversationButton?.addEventListener("click", () => {
+  if (requestInProgress) {
+    return;
+  }
+  conversationId = null;
+  roleSelect.disabled = false;
+  input.disabled = false;
+  sendButton.disabled = false;
+  micButton.disabled = false;
+  clearConversationView();
+  renderWelcomeNote();
+  setConversationStatus("Started a new conversation.");
+  input.focus();
+});
+
+roleSelect?.addEventListener("change", () => {
+  if (!conversationId || requestInProgress) {
+    return;
+  }
+  conversationId = null;
+  clearConversationView();
+  renderWelcomeNote();
+  setConversationStatus("Assistant role changed. A new conversation will be started.");
 });
 
 input.addEventListener("keydown", (event) => {
@@ -352,7 +651,11 @@ function clearRecognitionHandlers(activeRecognition) {
   activeRecognition.onend = null;
 }
 
-function stopRecognition() {
+function stopRecognition(discardResults = false) {
+  if (discardResults) {
+    recognitionDiscardResults = true;
+  }
+
   if (!recognition || recognitionState === "idle" || recognitionState === "stopping") {
     return;
   }
@@ -370,14 +673,14 @@ function stopRecognition() {
 }
 
 function startRecognition() {
-  if (input.disabled) {
+  if (input.disabled || requestInProgress) {
     setSpeechStatus("Wait for the current response to finish before using the microphone.");
     return;
   }
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    setSpeechStatus("Speech recognition is not supported in this browser. Try a supported browser such as Chrome or Edge.", true);
+    setSpeechStatus("Speech recognition is unavailable in this browser. You can continue by typing.", true);
     return;
   }
 
@@ -385,6 +688,7 @@ function startRecognition() {
     return;
   }
 
+  recognitionDiscardResults = false;
   recognitionHadResult = false;
   recognitionErrorMessage = "";
   let activeRecognition;
@@ -402,11 +706,26 @@ function startRecognition() {
   }
 
   activeRecognition.onstart = () => {
+    if (
+      recognition !== activeRecognition ||
+      recognitionDiscardResults ||
+      requestInProgress
+    ) {
+      return;
+    }
     setRecognitionState("listening");
     setSpeechStatus("Listening... Speak now, then click the microphone to stop.");
   };
 
   activeRecognition.onresult = (event) => {
+    if (
+      recognition !== activeRecognition ||
+      recognitionDiscardResults ||
+      requestInProgress
+    ) {
+      return;
+    }
+
     const transcript = Array.from(event.results)
       .slice(event.resultIndex)
       .filter((result) => result.isFinal)
@@ -425,12 +744,29 @@ function startRecognition() {
   };
 
   activeRecognition.onerror = (event) => {
+    if (
+      recognition !== activeRecognition ||
+      recognitionDiscardResults ||
+      requestInProgress
+    ) {
+      return;
+    }
+
     recognitionErrorMessage = getRecognitionErrorMessage(event.error);
     setSpeechStatus(recognitionErrorMessage, true);
   };
 
   activeRecognition.onend = () => {
-    if (!recognitionErrorMessage) {
+    if (recognition !== activeRecognition) {
+      clearRecognitionHandlers(activeRecognition);
+      return;
+    }
+
+    if (recognitionDiscardResults || requestInProgress) {
+      if (recognitionState === "stopping") {
+        setSpeechStatus("Speech recognition stopped.");
+      }
+    } else if (!recognitionErrorMessage) {
       if (recognitionHadResult) {
         setSpeechStatus("Speech recognized. Review or edit the message before sending.");
       } else if (recognitionState === "stopping") {
@@ -442,10 +778,10 @@ function startRecognition() {
     }
 
     clearRecognitionHandlers(activeRecognition);
-    if (recognition === activeRecognition) {
-      recognition = null;
-      setRecognitionState("idle");
-    }
+    recognition = null;
+    recognitionDiscardResults = false;
+    setRecognitionState("idle");
+    micButton.disabled = requestInProgress;
   };
 
   setRecognitionState("starting");

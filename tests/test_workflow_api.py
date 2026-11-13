@@ -1,5 +1,6 @@
 """Flask API tests for role-specific workflow execution."""
 
+import re
 from typing import Any
 
 import pytest
@@ -13,10 +14,39 @@ from app.workflows.registry import create_default_workflow_registry
 
 
 @pytest.fixture
-def client() -> FlaskClient:
-    """Provide an isolated Flask test client."""
-    run.app.config.update(TESTING=True)
-    return run.app.test_client()
+def client(tmp_path) -> FlaskClient:
+    """Provide an authenticated client backed by an isolated test database."""
+    run.app.config.update(
+        TESTING=True,
+        SECRET_KEY="workflow-api-test-secret",
+        SESSION_COOKIE_SECURE=False,
+        AUTH_DATABASE=str(tmp_path / "workflow-api-users.sqlite3"),
+        BOOTSTRAP_ADMIN_USERNAME=None,
+        BOOTSTRAP_ADMIN_PASSWORD=None,
+        BOOTSTRAP_AGENT_USERNAME=None,
+        BOOTSTRAP_AGENT_PASSWORD=None,
+    )
+    test_client = run.app.test_client()
+    page = test_client.get("/login")
+    token = re.search(
+        r'<meta name="csrf-token" content="([^"]+)"',
+        page.get_data(as_text=True),
+    )
+    assert token is not None
+    test_client.environ_base["HTTP_X_CSRF_TOKEN"] = token.group(1)
+
+    registration = test_client.post(
+        "/api/auth/register",
+        json={"username": "workflow-test-user", "password": "workflow-test-password"},
+    )
+    assert registration.status_code == 201
+    login = test_client.post(
+        "/api/auth/login",
+        json={"username": "workflow-test-user", "password": "workflow-test-password"},
+    )
+    assert login.status_code == 200
+    test_client.environ_base["HTTP_X_CSRF_TOKEN"] = login.get_json()["csrf_token"]
+    return test_client
 
 
 def _request_payload(**overrides: Any) -> dict[str, Any]:
@@ -65,7 +95,8 @@ def test_assistant_api_recognizes_query_and_executes_workflow(
     assert response.get_json()["data"]["employee_id"] == "EMP-42"
     assert response.get_json()["data"]["source"] == "mock"
     assert response.get_json()["response"] == (
-        "Your leave balance for employee EMP-42 is 12 days."
+        "Your leave balance for employee EMP-42 is 12 days. "
+        "This is demonstration data from a mock integration."
     )
     assert response.get_json()["response_source"] == "deterministic"
     assert response.get_json()["response_evaluation"]["relevant"] is True
@@ -107,7 +138,8 @@ def test_assistant_api_replaces_unsupported_leave_approval_claim(
     assert response.status_code == 200
     assert result["status"] == "success"
     assert result["response"] == (
-        "Your leave balance for employee EMP-42 is 12 days."
+        "Your leave balance for employee EMP-42 is 12 days. "
+        "This is demonstration data from a mock integration."
     )
     assert result["response_replaced"] is True
     assert result["response_evaluation"]["relevant"] is True
@@ -152,6 +184,18 @@ def test_assistant_api_rejects_malformed_json(client: FlaskClient) -> None:
 
     assert response.status_code == 400
     assert response.get_json() == {"error": "Request body must be a JSON object."}
+
+
+def test_assistant_api_rejects_oversized_request_body_safely(
+    client: FlaskClient,
+) -> None:
+    response = client.post(
+        "/api/assistant/execute",
+        data=b"x" * (65 * 1024),
+        content_type="application/json",
+    )
+    assert response.status_code == 413
+    assert response.get_json() == {"error": "Request body exceeds the allowed size."}
 
 
 def test_assistant_api_escalates_when_recognized_intent_is_low_confidence(
@@ -231,7 +275,8 @@ def test_assistant_api_replaces_irrelevant_generated_response(
     assert response.status_code == 200
     assert response.get_json()["status"] == "success"
     assert response.get_json()["response"] == (
-        "Your leave balance for employee EMP-42 is 12 days."
+        "Your leave balance for employee EMP-42 is 12 days. "
+        "This is demonstration data from a mock integration."
     )
     assert response.get_json()["response_source"] == "deterministic_fallback"
     assert response.get_json()["response_replaced"] is True
@@ -521,7 +566,7 @@ def test_workflow_api_returns_safe_response_for_unexpected_failure(
     assert "private details" not in response.get_data(as_text=True)
 
 
-def test_workflow_api_preserves_cors_for_cross_origin_requests(
+def test_workflow_api_does_not_allow_unconfigured_cross_origin_requests(
     client: FlaskClient,
 ) -> None:
     origin = "https://client.example"
@@ -534,8 +579,7 @@ def test_workflow_api_preserves_cors_for_cross_origin_requests(
     )
 
     assert response.status_code == 200
-    assert response.headers["Access-Control-Allow-Origin"] == origin
-    assert "POST" in response.headers["Access-Control-Allow-Methods"]
+    assert "Access-Control-Allow-Origin" not in response.headers
 
 
 @pytest.mark.parametrize(
@@ -559,3 +603,20 @@ def test_existing_get_endpoints_remain_available(
             "status": "healthy",
             "service": run.PROJECT_NAME,
         }
+
+
+def test_chat_route_renders_frontend_with_backend_role_values_and_urls(
+    client: FlaskClient,
+) -> None:
+    response = client.get("/chat")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'id="selected-role"' in html
+    assert '<option value="HR">HR</option>' in html
+    assert '<option value="IT Support">IT Support</option>' in html
+    assert '<option value="Admissions">Admissions</option>' in html
+    with run.app.test_request_context():
+        assert f'href="{run.app.url_for("static", filename="css/style.css")}"' in html
+        assert f'src="{run.app.url_for("static", filename="js/chat.js")}"' in html
+        assert f'action="{run.app.url_for("execute_assistant_query")}"' in html

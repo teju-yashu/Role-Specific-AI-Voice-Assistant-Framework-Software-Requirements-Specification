@@ -11,6 +11,7 @@ from app.nlu.response_generator import (
 from app.nlu.role_prompts import build_response_prompt, get_role_prompt
 
 
+
 @pytest.mark.parametrize("role", ["HR", "IT Support", "Admissions"])
 def test_each_configured_role_has_distinct_scoped_prompt(role: str) -> None:
     prompt = get_role_prompt(role)

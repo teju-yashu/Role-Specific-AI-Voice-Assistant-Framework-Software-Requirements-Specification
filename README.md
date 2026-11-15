@@ -23,7 +23,7 @@ The project demonstrates how one authenticated assistant interface can route req
 ## Supported roles
 
 | Assistant | Demonstration capabilities |
-| --- | --- |
+| --- | --- | 
 | HR Assistant | Leave-balance lookup and HR-related questions. The sample lookup may ask for an employee ID. |
 | IT Support Assistant | Create a sample IT ticket, respond to technical questions, and escalate requests that need an agent. |
 | Admissions Assistant | Look up a sample application status and answer admissions-related questions. The sample lookup may ask for an application ID. |

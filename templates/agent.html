@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token }}" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <title>Agent queue | Role-Specific Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <script src="{{ url_for('static', filename='js/portal.js') }}" defer></script>
+  </head>
+  <body>
+    <main class="portal-shell">
+      <section class="portal-card" id="agent-dashboard">
+        <header class="portal-header">
+          <div>
+            <p class="eyebrow">Human agent workspace</p>
+            <h1>Escalation queue</h1>
+            <p>Review demonstration workflow escalations and provide a response.</p>
+          </div>
+          <nav aria-label="Staff navigation">
+            {% if account_role == "admin" %}
+            <a href="{{ url_for('admin_page') }}">Administrator dashboard</a>
+            {% endif %}
+            <form class="logout-form" id="logout-form" method="post" action="{{ url_for('logout_account') }}">
+              <button type="submit">Sign out</button>
+            </form>
+          </nav>
+        </header>
+        <div class="portal-actions">
+          <p>External agent notifications are not configured; refresh this queue to check for new requests.</p>
+          <button id="refresh-escalations" type="button">Refresh queue</button>
+        </div>
+        <p class="portal-status" id="portal-status" role="status" aria-live="polite"></p>
+        <div class="escalation-list" id="escalation-list" aria-live="polite"></div>
+      </section>
+    </main>
+  </body>
+</html>

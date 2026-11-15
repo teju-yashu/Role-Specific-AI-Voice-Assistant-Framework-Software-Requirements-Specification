@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token }}" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <title>Account | Role-Specific Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <script src="{{ url_for('static', filename='js/auth.js') }}" defer></script>
+  </head>
+  <body>
+    <main class="auth-shell">
+      <section class="auth-card" aria-labelledby="auth-title">
+        <p class="eyebrow">Role-specific assistant</p>
+        <h1 id="auth-title">Your account</h1>
+        <p class="auth-intro">Sign in to continue, or create an account to get started.</p>
+
+        <form class="auth-form" id="login-form" method="post" action="{{ url_for('login_account') }}">
+          <h2>Sign in</h2>
+          <label for="login-username">Username</label>
+          <input
+            id="login-username"
+            name="username"
+            type="text"
+            maxlength="128"
+            autocomplete="username"
+            required
+          />
+          <label for="login-password">Password</label>
+          <input
+            id="login-password"
+            name="password"
+            type="password"
+            maxlength="1024"
+            autocomplete="current-password"
+            required
+          />
+          <button class="send-button auth-submit" type="submit">Sign in</button>
+        </form>
+
+        <form class="auth-form" id="register-form" method="post" action="{{ url_for('register_account') }}">
+          <h2>Create account</h2>
+          <label for="register-username">Username</label>
+          <input
+            id="register-username"
+            name="username"
+            type="text"
+            maxlength="128"
+            autocomplete="username"
+            required
+          />
+          <label for="register-password">Password (at least 8 characters)</label>
+          <input
+            id="register-password"
+            name="password"
+            type="password"
+            minlength="8"
+            maxlength="1024"
+            autocomplete="new-password"
+            required
+          />
+          <button class="send-button auth-submit" type="submit">Create account</button>
+        </form>
+        <p class="auth-status" id="auth-status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+  </body>
+</html>

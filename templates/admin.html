@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token }}" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <title>Administration | Role-Specific Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <script src="{{ url_for('static', filename='js/portal.js') }}" defer></script>
+  </head>
+  <body>
+    <main class="portal-shell">
+      <section class="portal-card" id="admin-dashboard">
+        <header class="portal-header">
+          <div>
+            <p class="eyebrow">Prototype administration</p>
+            <h1>System dashboard</h1>
+            <p>Usage counts are local prototype metrics, not production analytics.</p>
+          </div>
+          <nav aria-label="Administrator navigation">
+            <a href="{{ url_for('agent_page') }}">Agent queue</a>
+            <form class="logout-form" id="logout-form" method="post" action="{{ url_for('logout_account') }}">
+              <button type="submit">Sign out</button>
+            </form>
+          </nav>
+        </header>
+        <p class="portal-status" id="portal-status" role="status" aria-live="polite"></p>
+        <div class="portal-grid" id="metric-cards" aria-live="polite"></div>
+        <section class="portal-section" aria-labelledby="role-heading">
+          <h2 id="role-heading">Assistant roles and workflow status</h2>
+          <div id="role-table"></div>
+        </section>
+        <section class="portal-section" aria-labelledby="workflow-heading">
+          <h2 id="workflow-heading">Workflow request outcomes</h2>
+          <div id="workflow-table"></div>
+        </section>
+        <section class="portal-section" aria-labelledby="activity-heading">
+          <h2 id="activity-heading">Recent system activity</h2>
+          <div id="activity-table"></div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

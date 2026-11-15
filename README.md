@@ -1,5 +1,5 @@
 # Role-Specific AI Voice Assistant Framework
-
+ 
 A prototype Flask application that provides role-specific HR, IT Support, and Admissions assistants. It combines optional OpenAI language-model capabilities with the project's existing intent validation and registered Python workflows. When OpenAI is disabled or unavailable, the application continues in rule-based mode.
 
 The project uses demonstration integrations and data. It is not connected to a real organization's HR, IT, or admissions systems and is not production-ready.

@@ -21,6 +21,18 @@ _LEAVE_APPROVAL_CLAIM = re.compile(
     r"[^.!?]{0,80}\b(?:leave|time off)\b",
     re.IGNORECASE,
 )
+_GENERAL_RECORD_CLAIM = re.compile(
+    r"\b(?:your|employee)\s+(?:leave balance|application status|application|ticket)"
+    r"\s+(?:is|was|has|shows|stands)\b|\b(?:created|opened)\s+(?:your\s+)?"
+    r"(?:support\s+)?ticket\b",
+    re.IGNORECASE,
+)
+_GENERAL_POLICY_CLAIM = re.compile(
+    r"\b(?:your|our|the organization(?:'s|’s))\b[^.!?]{0,40}\b"
+    r"(?:policy|policies|records?|guidelines?)\s+"
+    r"(?:is|are|allows?|requires?|states?|provides?|shows?)\b",
+    re.IGNORECASE,
+)
 
 
 class ResponseEvaluator:
@@ -107,10 +119,37 @@ class ResponseEvaluator:
                 and "completed successfully" not in text
                 and " created " not in text
             )
+        if status == "invalid_input":
+            return (
+                any(word in text for word in ("couldn’t", "could not", "unable"))
+                and "completed successfully" not in text
+                and " created " not in text
+            )
         if status == "unknown_intent":
             return (
                 any(word in text for word in ("couldn’t identify", "unsupported", "rephrase"))
                 and "completed successfully" not in text
+            )
+        if status == "general_question":
+            has_general_caveat = any(
+                phrase in text
+                for phrase in (
+                    "general information",
+                    "general guidance",
+                    "do not have access",
+                    "don't have access",
+                    "don’t have access",
+                    "not authoritative",
+                )
+            )
+            return (
+                has_general_caveat
+                and not any(
+                    phrase in text
+                    for phrase in ("completed successfully", "workflow succeeded")
+                )
+                and _GENERAL_RECORD_CLAIM.search(text) is None
+                and _GENERAL_POLICY_CLAIM.search(text) is None
             )
         return False
 
@@ -122,11 +161,15 @@ class ResponseEvaluator:
         text: str,
     ) -> bool:
         status = result.get("status")
+        if status == "general_question":
+            return True
         if status != "success":
             if status == "clarification_required":
                 missing = (result.get("data") or {}).get("missing_entities", [])
-                if not isinstance(missing, list) or not missing:
+                if not isinstance(missing, list):
                     return False
+                if not missing:
+                    return "?" in text
                 entity_terms = {
                     "employee_id": "employee id",
                     "application_id": "application id",
@@ -179,4 +222,9 @@ class ResponseEvaluator:
             intent == "check_leave_balance"
             and _LEAVE_APPROVAL_CLAIM.search(lowered_response)
         )
+        if data.get("source") == "mock":
+            claims_supported = claims_supported and any(
+                marker in lowered_response
+                for marker in ("demonstration data", "sample data")
+            )
         return supported_numbers and supported_result and claims_supported

@@ -45,6 +45,30 @@ For an authenticated chat request, the application checks the session and CSRF t
 
 In rule-based mode—or when an OpenAI call cannot be completed—the existing NLU, clarification handling, workflow agent, and response generation remain available. A model suggestion alone cannot authorize an operation or bypass workflow validation and access controls.
 
+### Architecture overview
+
+```mermaid
+flowchart LR
+    U[User / Browser] --> B[Flask App\nAuth + Sessions + CSRF]
+    B --> N[NLU Layer\nRule-based + optional OpenAI]
+    N --> WA[Workflow Agent\nValidate role, confidence, entities]
+    WA --> WR[Workflow Registry\nHR / IT Support / Admissions]
+    WR --> INT[Mock Integrations\nLeave / Ticket / Application status]
+    INT --> RG[Response Generator\nValidated result to user-facing answer]
+    RG --> DB[(SQLite\nUsers, conversations, events, escalations)]
+    DB --> U
+
+    subgraph Safety[Guardrails]
+        V[Intent validation\nrole checks\nmissing-info prompts\nconfidence threshold]
+    end
+
+    N --> V
+    WA --> V
+    V --> WA
+```
+
+This design keeps deterministic business rules in the application layer and treats the LLM as an optional helper for interpretation and explanation, not as the source of truth for operational decisions.
+
 ## OpenAI and hybrid architecture
 
 - OpenAI is optional and is called only from the Flask server. The API key is never sent to browser JavaScript.
